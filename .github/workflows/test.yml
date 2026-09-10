@@ -17,6 +17,13 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
+      # npm 11 on every leg. package-lock.json is written by npm 11, and npm 10
+      # cannot read it: `npm ci` stops with EBADPLATFORM on esbuild's optional
+      # per-platform packages ("Unsupported platform for
+      # @esbuild/aix-ppc64: wanted os aix, current linux"). Node 20 ships npm
+      # 10.8 and node 22 ships npm 10.9, so both need this; node 24 already
+      # bundles npm 11.19. release.yml pins node 24.20.0 for the same reason.
+      - run: npm install --global npm@^11
       # `npm ci` rather than `npm install`: the lockfile is the tested input,
       # and release.yml installs the same way.
       - run: npm ci
