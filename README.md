@@ -73,10 +73,38 @@ build stable:
   together with the type annotations in `src/`.
 
 ### Publishing
-`.github/workflows/release.yml` publishes to npm on each push to `main`, but
-only when the version in `package.json` is not on the registry yet. Any other
-push to `main` is a no-op. To release, raise the version in `package.json` and
-merge that change.
+`.github/workflows/release.yml` releases on each push to `main`, and it picks
+the version itself from the conventional commits since the last `v*` tag. You
+do not edit the version by hand.
+
+| commit | bump |
+| --- | --- |
+| `feat!:`, or a `BREAKING CHANGE:` footer | major |
+| `feat:` | minor |
+| `fix:`, `perf:` | patch |
+| anything else | no release |
+
+So `chore:`, `docs:`, `ci:`, `test:`, `refactor:`, `style:` and `build:`
+release nothing on their own, and neither does a commit with no conventional
+prefix. A push that carries only those commits ends the run green and publishes
+nothing.
+
+When a release is due, the workflow writes the new version to `package.json`,
+prepends a section to `CHANGELOG.md`, commits as
+`chore(release): publish`, tags `v<version>`, publishes to npm, and creates the
+GitHub release. The build job skips that release commit, so a release does not
+start another release.
+
+`tools/version.mjs` decides the version, and it only writes files. Ask it what
+a release would do, at any time, against a dirty tree:
+
+```bash
+node tools/version.mjs --dry-run
+```
+
+Every git write stays in the workflow, so the script is safe to run locally.
+`cornerstonejs/codecs` splits `tools/release/version.mjs` and its release
+workflow the same way.
 
 The workflow authenticates with npm through OIDC trusted publishing. It uses a
 short-lived token that npm mints for each run and scopes to this workflow file,
@@ -114,6 +142,20 @@ though the same token publishes without a problem.
 Every access token that could publish this package before can still publish it
 afterwards. To close that path, set the package's Publishing access on
 npmjs.com to "Require two-factor authentication and disallow tokens".
+
+Last, tag the version you published, on `main`, after the merge:
+
+```bash
+git checkout main && git pull
+git tag -a v2.2.0 -m 'v2.2.0'
+git push origin v2.2.0
+```
+
+**Do not skip the tag.** `tools/version.mjs` reads the commits since the last
+`v*` tag, and a manual publish creates no tag. Without `v2.2.0` the next push
+to `main` reads back past it, finds the `fix:` commits that 2.2.0 already
+carries, and releases an identical 2.2.1. Every later tag comes from the
+workflow, so this is a one-time step.
 
 ### Acknowledgments
 This decoder was originally written by Helmut Dersch for Java.  I added support for selection values 2 through 7, contributed bug fixes and ported to JavaScript.
