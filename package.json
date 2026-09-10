@@ -33,6 +33,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "pretest": "npm run build",
     "build": "tsup",
     "lint": "eslint .",
     "prepublishOnly": "npm run build"
@@ -63,5 +64,8 @@
     "tsup": {
       "esbuild": "0.19.7"
     }
+  },
+  "allowScripts": {
+    "esbuild@0.19.7": true
   }
 }
