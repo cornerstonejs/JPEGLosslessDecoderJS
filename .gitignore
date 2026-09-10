@@ -19,3 +19,5 @@ release/
 *.d.ts
 *.js.map
 *.cjs.map
+# npm pack output
+*.tgz

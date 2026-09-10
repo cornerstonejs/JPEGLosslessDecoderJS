@@ -54,6 +54,18 @@ the source maps and the declaration files that one build emits. Commit
 the 2.1.2 build, and it did not hold the fix that the same commit added to
 `src/`.
 
+Two versions in `package.json` are held on purpose, and each one keeps the
+build stable:
+
+- `overrides.tsup.esbuild` holds esbuild at `0.19.7`. esbuild emits the bundle,
+  and a different esbuild emits different JavaScript for the same source. The
+  pin lets `npm audit fix` update the test tools without a change to the
+  published artifact. `cornerstonejs/codecs` pins esbuild for the same reason.
+- `typescript` uses `~5.4.3`, not `^5.4.3`. TypeScript 5.7 made
+  `ArrayBufferLike` stop satisfying `ArrayBuffer`, and `src/decoder.ts` line 93
+  then fails to compile, which fails the declaration build. Raise the pin
+  together with the type annotations in `src/`.
+
 ### Publishing
 `.github/workflows/release.yml` publishes to npm on each push to `main`, but
 only when the version in `package.json` is not on the registry yet. Any other

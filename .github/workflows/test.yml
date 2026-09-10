@@ -5,7 +5,10 @@ jobs:
   test:
     strategy:
       matrix:
-        node-version: [20.x, 18.x, 16.x]
+        # vitest 4 needs node ^20 || ^22 || >=24, so 18.x and 16.x cannot run
+        # the tests any more. Both reached end of life (node 16 in 2023-09,
+        # node 18 in 2025-04). 24.x is what release.yml publishes on.
+        node-version: [20.x, 22.x, 24.x]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,7 +17,9 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
-      - run: npm install
+      # `npm ci` rather than `npm install`: the lockfile is the tested input,
+      # and release.yml installs the same way.
+      - run: npm ci
       - run: npm run build
       - name: Lint
         run: npm run lint
