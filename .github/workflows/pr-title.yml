@@ -1,0 +1,52 @@
+name: pr title
+
+# The pull request title is this repository's release contract.
+#
+# Merges here are squash merges, so a merge writes ONE commit to main and its
+# subject is the pull request title. tools/version.mjs reads that subject to
+# pick the next version, which makes the title — not the individual commits —
+# what decides the release.
+#
+# Pull request #1 is why this check exists. It carried seven commits, four of
+# them `fix:`, and merged under the title "chore: publish as
+# @cornerstonejs/jpeg-lossless-decoder-js". `chore` releases nothing, so the
+# release workflow published nothing, and the run still reported success
+# because "nothing to release" is a legitimate green outcome. The mistake was
+# invisible until someone looked at the registry.
+#
+# This check moves that outcome to where it can still be changed: it fails a
+# title that is not conventional, and it states the release a valid title will
+# produce.
+
+on:
+  pull_request:
+    # `edited` matters as much as `opened`: the title is what merges, so a
+    # title corrected after review has to re-run this check. Without `edited`
+    # a stale pass would sit on a title nobody checked.
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - name: Check the title
+        # The title reaches the script through the environment, never through
+        # the run script's text. A title is attacker-controlled on a fork pull
+        # request, and `${{ ... }}` interpolation would paste it into the shell
+        # — a title containing `$(...)` would then execute.
+        #
+        # No install: tools/check-pr-title.mjs and tools/conventional.mjs
+        # import nothing but each other.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node tools/check-pr-title.mjs
