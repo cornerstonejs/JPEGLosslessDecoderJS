@@ -17,12 +17,14 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
-      # npm 11 on every leg. package-lock.json is written by npm 11, and npm 10
-      # cannot read it: `npm ci` stops with EBADPLATFORM on esbuild's optional
-      # per-platform packages ("Unsupported platform for
-      # @esbuild/aix-ppc64: wanted os aix, current linux"). Node 20 ships npm
-      # 10.8 and node 22 ships npm 10.9, so both need this; node 24 already
-      # bundles npm 11.19. release.yml pins node 24.20.0 for the same reason.
+      # npm 11 on every leg. npm 10 and npm 11 do not resolve the nested
+      # `overrides.tsup.esbuild` in package.json the same way: npm 11 settles
+      # the whole tree on esbuild 0.19.7, while npm 10 keeps vite's own
+      # esbuild 0.28.2 and then reports the lockfile as out of sync
+      # ("Missing: esbuild@0.28.2 from lock file"). One lockfile cannot serve
+      # both, so this repository needs npm 11 everywhere. Node 20 ships npm
+      # 10.8 and node 22 ships npm 10.9; node 24 already bundles npm 11.19,
+      # which is why release.yml pins node 24.20.0.
       - run: npm install --global npm@^11
       # `npm ci` rather than `npm install`: the lockfile is the tested input,
       # and release.yml installs the same way.
