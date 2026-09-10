@@ -8,7 +8,7 @@ This decoder can read data from the following DICOM transfer syntaxes:
 - 1.2.840.10008.1.2.4.70    JPEG Lossless, Nonhierarchical (Processes 14 [Selection 1])
 
 ### Usage
-[API](https://github.com/rii-mango/JPEGLosslessDecoderJS/wiki/API) and [more examples](https://github.com/rii-mango/JPEGLosslessDecoderJS/tree/master/tests)
+[API](https://github.com/rii-mango/JPEGLosslessDecoderJS/wiki/API) and [more examples](https://github.com/cornerstonejs/JPEGLosslessDecoderJS/tree/main/tests)
 
 ```javascript
 var decoder = new jpeg.lossless.Decoder();
@@ -24,16 +24,16 @@ var output = decoder.decompress(buffer [, offset [, length]]);
 ```
 
 ### Install
-Get a packaged source file from the [release folder](https://github.com/rii-mango/JPEGLosslessDecoderJS/tree/master/release):
-
-* [lossless.js](https://raw.githubusercontent.com/rii-mango/JPEGLosslessDecoderJS/master/release/lossless.js)
-* [lossless-min.js](https://raw.githubusercontent.com/rii-mango/JPEGLosslessDecoderJS/master/release/lossless-min.js)
-
-Or install via [NPM](https://www.npmjs.com/):
+Install this fork via [NPM](https://www.npmjs.com/):
 
 ```
-npm install jpeg-lossless-decoder-js
+npm install @cornerstonejs/jpeg-lossless-decoder-js
 ```
+
+This fork adds the byte-aligned-end-of-scan fix. The unscoped
+`jpeg-lossless-decoder-js@2.1.2` on npm drops the final sample of any frame
+whose last Huffman code ends exactly on a byte boundary, so a real CT image
+decodes with a wrong last pixel.
 
 ### Testing
 ```
@@ -44,7 +44,118 @@ npm test
 ```
 npm run build
 ```
-This will output `lossless.js` and `lossless-min.js` alongside declaration files and source maps to `/release`.
+This writes `lossless.js` and `lossless-min.js`, together with the declaration
+files and the source maps, to `/release`.
+
+`release/` is build output and git ignores it. Do not commit it. A committed
+`release/` could never be complete, because the same `.gitignore` also excludes
+the source maps and the declaration files that one build emits. Commit
+`03bb80c0` showed the cost: its committed `release/cjs/lossless.cjs` was still
+the 2.1.2 build, and it did not hold the fix that the same commit added to
+`src/`.
+
+Two versions in `package.json` are held on purpose, and each one keeps the
+build stable:
+
+- `overrides.esbuild` holds esbuild at `0.19.7`. esbuild emits the bundle, and
+  a different esbuild emits different JavaScript for the same source. The pin
+  lets `npm audit fix` update the test tools without a change to the published
+  artifact. `cornerstonejs/codecs` pins esbuild for the same reason.
+
+  The pin covers the whole tree on purpose. A pin of `tsup` alone, as
+  `overrides.tsup.esbuild`, makes npm 10 and npm 11 build different trees —
+  npm 11 collapses the tree onto 0.19.7 and npm 10 keeps vite's esbuild
+  0.28.2 beside it — and then one lockfile cannot serve both. With this flat
+  pin, npm 10.8, npm 10.9 and npm 11.19 all install the same lockfile.
+- `typescript` uses `~5.4.3`, not `^5.4.3`. TypeScript 5.7 made
+  `ArrayBufferLike` stop satisfying `ArrayBuffer`, and `src/decoder.ts` line 93
+  then fails to compile, which fails the declaration build. Raise the pin
+  together with the type annotations in `src/`.
+
+### Publishing
+`.github/workflows/release.yml` releases on each push to `main`, and it picks
+the version itself from the conventional commits since the last `v*` tag. You
+do not edit the version by hand.
+
+| commit | bump |
+| --- | --- |
+| `feat!:`, or a `BREAKING CHANGE:` footer | major |
+| `feat:` | minor |
+| `fix:`, `perf:` | patch |
+| anything else | no release |
+
+So `chore:`, `docs:`, `ci:`, `test:`, `refactor:`, `style:` and `build:`
+release nothing on their own, and neither does a commit with no conventional
+prefix. A push that carries only those commits ends the run green and publishes
+nothing.
+
+When a release is due, the workflow writes the new version to `package.json`,
+prepends a section to `CHANGELOG.md`, commits as
+`chore(release): publish`, tags `v<version>`, publishes to npm, and creates the
+GitHub release. The build job skips that release commit, so a release does not
+start another release.
+
+`tools/version.mjs` decides the version, and it only writes files. Ask it what
+a release would do, at any time, against a dirty tree:
+
+```bash
+node tools/version.mjs --dry-run
+```
+
+Every git write stays in the workflow, so the script is safe to run locally.
+`cornerstonejs/codecs` splits `tools/release/version.mjs` and its release
+workflow the same way.
+
+The workflow authenticates with npm through OIDC trusted publishing. It uses a
+short-lived token that npm mints for each run and scopes to this workflow file,
+so this repository holds no `NPM_TOKEN`. The name of the workflow file is part
+of that configuration: rename the file, and npm refuses the exchange.
+
+**The first publish of a new package name must be manual.** npm cannot create a
+package that does not exist yet through trusted publishing. A maintainer with
+publish rights on the `@cornerstonejs` scope does this once:
+
+```bash
+npm login                       # a web login session, not an access token
+npm ci
+npm run lint && npm run test
+npm publish                     # prepublishOnly runs the build first
+```
+
+Then register this workflow as the package's trusted publisher, so that later
+releases need no token:
+
+```bash
+npm trust github @cornerstonejs/jpeg-lossless-decoder-js \
+  --repo cornerstonejs/JPEGLosslessDecoderJS \
+  --file release.yml \
+  --allow-publish --yes
+
+npm trust list @cornerstonejs/jpeg-lossless-decoder-js   # confirm it
+```
+
+`npm trust` needs npm 11.15.0 or later, and it accepts a web-login session only
+— a granular or classic access token in `~/.npmrc` fails with a 401, even
+though the same token publishes without a problem.
+
+`npm trust github` ADDS an authorized publishing path, and it revokes nothing.
+Every access token that could publish this package before can still publish it
+afterwards. To close that path, set the package's Publishing access on
+npmjs.com to "Require two-factor authentication and disallow tokens".
+
+Last, tag the version you published, on `main`, after the merge:
+
+```bash
+git checkout main && git pull
+git tag -a v2.2.0 -m 'v2.2.0'
+git push origin v2.2.0
+```
+
+**Do not skip the tag.** `tools/version.mjs` reads the commits since the last
+`v*` tag, and a manual publish creates no tag. Without `v2.2.0` the next push
+to `main` reads back past it, finds the `fix:` commits that 2.2.0 already
+carries, and releases an identical 2.2.1. Every later tag comes from the
+workflow, so this is a one-time step.
 
 ### Acknowledgments
 This decoder was originally written by Helmut Dersch for Java.  I added support for selection values 2 through 7, contributed bug fixes and ported to JavaScript.

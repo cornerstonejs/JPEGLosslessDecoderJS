@@ -1,0 +1,234 @@
+name: release
+
+# THE FILENAME OF THIS WORKFLOW IS LOAD-BEARING. The npm trusted publisher for
+# @cornerstonejs/jpeg-lossless-decoder-js names this file, so npm rejects the
+# OIDC exchange if the file is renamed or moved. Rename it only together with
+# `npm trust github` on the package.
+#
+# npm auth here is OIDC trusted publishing: a short-lived token minted per run
+# and scoped to this workflow. There is no NPM_TOKEN in this repository.
+#
+# npm cannot create a package that does not exist yet through trusted
+# publishing, so the FIRST publish of a new package name must happen from a
+# maintainer's machine with `npm login`. See README.md, "Publishing".
+#
+# What a push to main does:
+#   1. build   — install, lint, build, test, and keep release/ as an artifact.
+#   2. release — ask tools/version.mjs what the conventional commits since the
+#                last tag are worth. Nothing to release means the run stops
+#                here, green. Otherwise it writes the version, commits and
+#                tags.
+#   3. publish — publish that exact commit's artifact to npm.
+#
+# The three jobs are separate because of what each one is allowed to hold:
+# build installs third-party code, release can write to the repository, and
+# publish holds the OIDC token. No job holds two of those three.
+
+on:
+  push:
+    branches:
+      - main
+  # Lets a maintainer re-run a release that failed after a successful build.
+  workflow_dispatch:
+
+# One release at a time. Two runs that both decide a version is unpublished
+# would race, and the loser fails with EPUBLISHCONFLICT.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Skip the version commit that the release job below pushes. A push made
+    # with GITHUB_TOKEN does not start another workflow run, so this is a
+    # second guard rather than the only one — it also covers a maintainer who
+    # pushes a release commit by hand. Anchored on the subject AND the bot
+    # author, so a human commit that opens with the same words still releases.
+    # `cornerstonejs/codecs` guards its bench and pr-checks workflows the same
+    # way.
+    if: >-
+      github.event_name != 'push'
+      || !(startsWith(github.event.head_commit.message, 'chore(release): publish')
+      && github.event.head_commit.author.email == '41898282+github-actions[bot]@users.noreply.github.com')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # Bundles npm 11.19.0, comfortably past the npm 11.5.1 that OIDC
+          # trusted publishing needs. The publish job pins the same version.
+          node-version: '24.20.0'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test
+      - name: Check the package exists on the registry
+        # Trusted publishing cannot create a package name, so a missing name
+        # means a maintainer has to do the first publish by hand. Fail here,
+        # before the release job writes a version commit and a tag for a
+        # publish that cannot succeed.
+        run: |
+          set -euo pipefail
+          name=$(node -p 'require("./package.json").name')
+          if npm view "$name" versions --json >/dev/null 2>&1; then
+            echo "$name is on the registry."
+          else
+            echo "::error::$name is not on the registry. The first publish of a"
+            echo "::error::new package name must be done from a maintainer's"
+            echo '::error::machine with "npm login". See README.md, Publishing.'
+            exit 1
+          fi
+      - name: Upload the built release/ directory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          path: release
+          retention-days: 7
+
+  release:
+    # Decides the next version and records it in the repository. Holds
+    # contents: write and NO id-token, and it installs nothing:
+    # tools/version.mjs imports only node builtins, so no third-party install
+    # script runs next to a token that can push to main.
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # commit and tag the version bump
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history and tags: version.mjs reads the commits since the last
+          # v* tag, and a shallow clone has neither.
+          fetch-depth: 0
+          # This checkout's credentials are what pushes the version commit.
+          persist-credentials: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - id: plan
+        name: Work out the next version
+        run: |
+          set -euo pipefail
+          plan=$(node tools/version.mjs --json | tail -1)
+          echo "$plan"
+          release=$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).release))' "$plan")
+          version=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).next)' "$plan")
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$release" = "true" ]; then
+            echo "::notice::Releasing $version"
+          else
+            echo "::notice::No releasing commit since the last tag; nothing to publish."
+          fi
+      - id: push
+        name: Commit, tag and push
+        if: steps.plan.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json CHANGELOG.md
+          # Subject exactly as the build job's guard above matches it, with the
+          # version in the body.
+          git commit -m 'chore(release): publish' -m "$VERSION"
+          # Annotated, so `git describe --tags` finds it and the tag carries the
+          # release date.
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin HEAD:main
+          git push origin "v$VERSION"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  publish:
+    # Holds id-token: write, so it installs NO dependencies and never runs a
+    # third-party install script. It replays the build job's release/ artifact
+    # and publishes that, exactly as the build job verified it.
+    needs: [build, release]
+    if: needs.release.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout only
+      id-token: write # mint the OIDC token npm exchanges for a publish token
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The version commit the release job just pushed — NOT the triggering
+          # commit, whose package.json still carries the previous version.
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # Same pin as the build job. This is where its bundled npm actually
+          # gets used, so the OIDC floor matters here.
+          node-version: '24.20.0'
+      - name: Replay the built release/ directory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: release
+      - name: Check the replayed artifact
+        # `files` in package.json ships release/, so an empty or partial
+        # download would publish a broken tarball. Fail before the publish
+        # rather than after it — npm forbids a re-publish of the same version.
+        run: |
+          set -euo pipefail
+          for f in release/cjs/lossless.cjs release/lossless.js release/lossless-min.js; do
+            [ -s "$f" ] || { echo "::error::$f is missing or empty"; exit 1; }
+          done
+          ls -la release release/cjs
+      - name: Publish to npm
+        # No .npmrc and no NODE_AUTH_TOKEN: `npm publish` performs the OIDC
+        # exchange itself using the id-token permission above. Provenance is
+        # generated automatically for a trusted publish, which is why
+        # package.json's repository.url must point at THIS repository.
+        #
+        # --ignore-scripts skips prepublishOnly, which would run `npm run build`
+        # and so need the devDependencies this job deliberately does not
+        # install. The artifact it would rebuild is the one just downloaded.
+        run: npm publish --ignore-scripts
+
+  github-release:
+    # Separate from publish so that contents: write never coexists with the
+    # OIDC publish token, the same split `cornerstonejs/codecs` uses. Runs
+    # after the publish, so a failed publish leaves no release behind. Installs
+    # nothing.
+    needs: [release, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # create the GitHub release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The CHANGELOG section this release wrote is the release note. Take
+          # the lines from this version's heading up to the next one.
+          notes=$(awk "/^## ${VERSION} /{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md)
+          [ -n "$notes" ] || notes="See CHANGELOG.md."
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "v$VERSION" \
+            --notes "$notes"

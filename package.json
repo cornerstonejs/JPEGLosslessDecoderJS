@@ -1,6 +1,6 @@
 {
-  "name": "jpeg-lossless-decoder-js",
-  "version": "2.1.2",
+  "name": "@cornerstonejs/jpeg-lossless-decoder-js",
+  "version": "2.2.0",
   "description": "A JavaScript JPEG Lossless decoder.",
   "type": "module",
   "main": "release/cjs/lossless.cjs",
@@ -8,6 +8,15 @@
   "types": "release/lossless.d.ts",
   "directories": {
     "test": "tests"
+  },
+  "files": [
+    "release",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
@@ -19,20 +28,19 @@
     "eslint-plugin-mocha": "^10.4.1",
     "eslint-plugin-prettier": "^5.1.3",
     "tsup": "^8.0.2",
-    "typescript": "^5.4.3",
-    "vitest": "^1.4.0"
-  },
-  "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "4.13.0"
+    "typescript": "~5.4.3",
+    "vitest": "^4.1.11"
   },
   "scripts": {
     "test": "vitest run",
+    "pretest": "npm run build",
     "build": "tsup",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "prepublishOnly": "npm run build"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rii-mango/JPEGLosslessDecoderJS.git"
+    "url": "git+https://github.com/cornerstonejs/JPEGLosslessDecoderJS.git"
   },
   "keywords": [
     "JavaScript",
@@ -49,7 +57,13 @@
   ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/rii-mango/JPEGLosslessDecoderJS/issues"
+    "url": "https://github.com/cornerstonejs/JPEGLosslessDecoderJS/issues"
   },
-  "homepage": "https://github.com/rii-mango/JPEGLosslessDecoderJS"
+  "homepage": "https://github.com/cornerstonejs/JPEGLosslessDecoderJS",
+  "overrides": {
+    "esbuild": "0.19.7"
+  },
+  "allowScripts": {
+    "esbuild@0.19.7": true
+  }
 }
