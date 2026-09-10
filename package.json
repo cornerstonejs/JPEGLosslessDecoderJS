@@ -61,9 +61,7 @@
   },
   "homepage": "https://github.com/cornerstonejs/JPEGLosslessDecoderJS",
   "overrides": {
-    "tsup": {
-      "esbuild": "0.19.7"
-    }
+    "esbuild": "0.19.7"
   },
   "allowScripts": {
     "esbuild@0.19.7": true
