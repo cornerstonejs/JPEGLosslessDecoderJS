@@ -1,0 +1,152 @@
+name: release
+
+# THE FILENAME OF THIS WORKFLOW IS LOAD-BEARING. The npm trusted publisher for
+# @cornerstonejs/jpeg-lossless-decoder-js names this file, so npm rejects the
+# OIDC exchange if the file is renamed or moved. Rename it only together with
+# `npm trust github` on the package.
+#
+# npm auth here is OIDC trusted publishing: a short-lived token minted per run
+# and scoped to this workflow. There is no NPM_TOKEN in this repository.
+#
+# npm cannot create a package that does not exist yet through trusted
+# publishing, so the FIRST publish of a new package name must happen from a
+# maintainer's machine with `npm login`. See README.md, "Publishing".
+
+on:
+  push:
+    branches:
+      - main
+  # Lets a maintainer re-run a publish that failed after a successful build.
+  workflow_dispatch:
+
+# One publish at a time. Two runs that both decide the version is unpublished
+# would race, and the loser fails with EPUBLISHCONFLICT.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Builds and verifies. This job installs dependencies, so it must NOT hold
+    # id-token: write — see the publish job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      name: ${{ steps.manifest.outputs.name }}
+      version: ${{ steps.manifest.outputs.version }}
+      publish: ${{ steps.registry.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # Bundles npm 11.19.0, comfortably past the npm 11.5.1 that OIDC
+          # trusted publishing needs. The publish job pins the same version.
+          node-version: '24.20.0'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test
+      - id: manifest
+        name: Read the name and version to publish
+        run: |
+          set -euo pipefail
+          name=$(node -p 'require("./package.json").name')
+          version=$(node -p 'require("./package.json").version')
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "manifest says $name@$version"
+      - id: registry
+        name: Decide whether that version needs a publish
+        # The source of truth is "the manifest version is not on the registry
+        # yet", not "the last commit changed package.json". That makes an
+        # ordinary commit to main a no-op instead of a failure, and it lets a
+        # run that died after publishing be re-run safely.
+        env:
+          NAME: ${{ steps.manifest.outputs.name }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          # `npm view` exits non-zero both for "no such version" and for a
+          # network fault, and those must not be treated the same way. Ask for
+          # the whole version list instead, which succeeds whenever the
+          # registry answered at all, and fails only if the package is absent.
+          if versions=$(npm view "$NAME" versions --json 2>/dev/null); then
+            if node -e 'process.exit(JSON.parse(process.argv[1]).includes(process.argv[2]) ? 0 : 1)' \
+                 "$versions" "$VERSION"; then
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::$NAME@$VERSION is already on the registry; nothing to publish."
+            else
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              echo "::notice::$NAME@$VERSION is new; it will be published."
+            fi
+          else
+            # The package name itself is unknown to the registry. Trusted
+            # publishing cannot create it, so say so rather than fail opaquely
+            # in the publish job.
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::error::$NAME is not on the registry. The first publish of a"
+            echo "::error::new package name must be done from a maintainer's"
+            echo '::error::machine with "npm login". See README.md, Publishing.'
+            exit 1
+          fi
+      - name: Upload the built release/ directory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          path: release
+          retention-days: 7
+
+  publish:
+    # Separate from build for one reason: this job holds id-token: write, and
+    # nothing a dependency's install script does may happen beside that token.
+    # So it installs NO dependencies. It replays the build job's release/
+    # artifact and publishes that, exactly as it was verified.
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout only
+      id-token: write # mint the OIDC token npm exchanges for a publish token
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # Same pin as the build job. This is where its bundled npm actually
+          # gets used, so the OIDC floor matters here.
+          node-version: '24.20.0'
+      - name: Replay the built release/ directory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: release
+      - name: Check the replayed artifact
+        # `files` in package.json ships release/, so an empty or partial
+        # download would publish a broken tarball. Fail before the publish
+        # rather than after it — npm forbids a re-publish of the same version.
+        run: |
+          set -euo pipefail
+          for f in release/cjs/lossless.cjs release/lossless.js release/lossless-min.js; do
+            [ -s "$f" ] || { echo "::error::$f is missing or empty"; exit 1; }
+          done
+          ls -la release release/cjs
+      - name: Publish to npm
+        # No .npmrc and no NODE_AUTH_TOKEN: `npm publish` performs the OIDC
+        # exchange itself using the id-token permission above. Provenance is
+        # generated automatically for a trusted publish, which is why
+        # package.json's repository.url must point at THIS repository.
+        #
+        # --ignore-scripts skips prepublishOnly, which would run `npm run build`
+        # and so need the devDependencies this job deliberately does not
+        # install. The artifact it would rebuild is the one just downloaded.
+        run: npm publish --ignore-scripts

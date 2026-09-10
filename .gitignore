@@ -3,6 +3,18 @@ node_modules/
 .idea/
 release.sh
 .DS_Store
+
+# release/ is build output. It used to be committed, but the commit could never
+# be complete: the four patterns below excluded the source maps and the type
+# declarations that the same build emits. A pinned commit therefore carried a
+# bundle that did not match its own src/, which is what commit 03bb80c0 showed
+# — its committed release/cjs/lossless.cjs was still the 2.1.2 build, without
+# the byte-aligned-end fix that the same commit added to src/.
+#
+# `npm run build` regenerates the whole directory, and prepublishOnly runs it
+# before every publish, so the published tarball always matches the source it
+# was built from.
+release/
 *.d.cts
 *.d.ts
 *.js.map
