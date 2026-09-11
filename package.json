@@ -51,8 +51,8 @@
     "1.2.840.10008.1.2.4.57",
     "1.2.840.10008.1.2.4.70"
   ],
-  "author": [
-    "Michael Martinez",
+  "author": "Michael Martinez",
+  "contributors": [
     "Helmut Dersch"
   ],
   "license": "MIT",
