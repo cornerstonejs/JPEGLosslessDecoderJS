@@ -1,6 +1,6 @@
 {
   "name": "@cornerstonejs/jpeg-lossless-decoder-js",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "A JavaScript JPEG Lossless decoder.",
   "type": "module",
   "main": "release/cjs/lossless.cjs",
