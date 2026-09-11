@@ -73,21 +73,41 @@ build stable:
   together with the type annotations in `src/`.
 
 ### Publishing
-`.github/workflows/release.yml` releases on each push to `main`, and it picks
-the version itself from the conventional commits since the last `v*` tag. You
-do not edit the version by hand.
 
-| commit | bump |
+**The pull request title decides the release.** This repository squash merges,
+so a merge writes one commit to `main` and the title of the pull request is
+that commit's subject. `.github/workflows/release.yml` reads the subject and
+picks the version. You do not edit the version by hand.
+
+| title | bump |
 | --- | --- |
-| `feat!:`, or a `BREAKING CHANGE:` footer | major |
-| `feat:` | minor |
-| `fix:`, `perf:` | patch |
-| anything else | no release |
+| `feat!: …`, or a `BREAKING CHANGE:` footer | major |
+| `feat: …` | minor |
+| `fix: …`, `perf: …` | patch |
+| `build:`, `chore:`, `ci:`, `docs:`, `refactor:`, `revert:`, `style:`, `test:` | no release |
+| no conventional prefix | rejected before merge |
 
-So `chore:`, `docs:`, `ci:`, `test:`, `refactor:`, `style:` and `build:`
-release nothing on their own, and neither does a commit with no conventional
-prefix. A push that carries only those commits ends the run green and publishes
-nothing.
+A title with a type in the fourth row is valid and publishes nothing, which is
+right for a change that does not reach the package.
+
+`.github/workflows/pr-title.yml` checks the title on every pull request, and it
+re-checks after an edit. It fails a title that is not conventional, and it
+states the release a valid title will produce, so the outcome is visible before
+the merge. Check a title locally with:
+
+```bash
+node tools/check-pr-title.mjs "fix: decode the last sample of a scan"
+```
+
+Pull request #1 is why the check exists. Seven commits, four of them `fix:`,
+merged under the title `chore: publish as
+@cornerstonejs/jpeg-lossless-decoder-js`. `chore` releases nothing, so the
+release workflow published nothing — and the run still reported success,
+because "nothing to release" is a legitimate green outcome. Only the registry
+showed the mistake.
+
+`tools/conventional.mjs` holds the rules that both the check and the release
+read, so the two cannot drift apart.
 
 When a release is due, the workflow writes the new version to `package.json`,
 prepends a section to `CHANGELOG.md`, commits as
@@ -111,19 +131,23 @@ short-lived token that npm mints for each run and scopes to this workflow file,
 so this repository holds no `NPM_TOKEN`. The name of the workflow file is part
 of that configuration: rename the file, and npm refuses the exchange.
 
-**The first publish of a new package name must be manual.** npm cannot create a
-package that does not exist yet through trusted publishing. A maintainer with
-publish rights on the `@cornerstonejs` scope does this once:
+#### How this package was bootstrapped
+
+The steps below are done. They are recorded because npm cannot create a package
+name through trusted publishing, so the first publish of ANY new package name
+has to be manual, and the next one starts here.
+
+`2.2.0` was published by hand:
 
 ```bash
 npm login                       # a web login session, not an access token
 npm ci
-npm run lint && npm run test
+npm run lint && npm test
 npm publish                     # prepublishOnly runs the build first
 ```
 
-Then register this workflow as the package's trusted publisher, so that later
-releases need no token:
+This workflow was then registered as the package's trusted publisher, so that
+later releases need no token:
 
 ```bash
 npm trust github @cornerstonejs/jpeg-lossless-decoder-js \
@@ -143,19 +167,12 @@ Every access token that could publish this package before can still publish it
 afterwards. To close that path, set the package's Publishing access on
 npmjs.com to "Require two-factor authentication and disallow tokens".
 
-Last, tag the version you published, on `main`, after the merge:
+Last, `v2.2.0` was tagged on `main`, because a manual publish creates no tag and
+`tools/version.mjs` reads the commits since the last `v*` tag. Every later tag
+comes from the workflow.
 
-```bash
-git checkout main && git pull
-git tag -a v2.2.0 -m 'v2.2.0'
-git push origin v2.2.0
-```
-
-**Do not skip the tag.** `tools/version.mjs` reads the commits since the last
-`v*` tag, and a manual publish creates no tag. Without `v2.2.0` the next push
-to `main` reads back past it, finds the `fix:` commits that 2.2.0 already
-carries, and releases an identical 2.2.1. Every later tag comes from the
-workflow, so this is a one-time step.
+`2.2.0` carries no provenance attestation: npm generates one only for a trusted
+publish from CI. Every version the workflow publishes has one.
 
 ### Acknowledgments
 This decoder was originally written by Helmut Dersch for Java.  I added support for selection values 2 through 7, contributed bug fixes and ported to JavaScript.

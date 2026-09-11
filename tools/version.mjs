@@ -21,15 +21,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { applyBump, BOT_EMAIL, bumpFor, RANK, RELEASE_SUBJECT } from './conventional.mjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MANIFEST = path.join(ROOT, 'package.json');
 const CHANGELOG = path.join(ROOT, 'CHANGELOG.md');
 const REPO_URL = 'https://github.com/cornerstonejs/JPEGLosslessDecoderJS';
-
-// The release workflow commits with this subject and this author. Such a
-// commit must never itself count towards the next bump.
-const RELEASE_SUBJECT = 'chore(release): publish';
-const BOT_EMAIL = '41898282+github-actions[bot]@users.noreply.github.com';
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes('--dry-run');
@@ -79,45 +76,10 @@ function commitsSince(tag) {
     });
 }
 
-// Which bump a single commit asks for, or null for a commit that releases
-// nothing. This follows the same set that lerna's conventional-commits preset
-// released on, which is what codecs' version.mjs preserves:
-//   - a breaking change  -> major
-//   - feat               -> minor
-//   - fix, perf          -> patch
-//   - anything else       -> no release
-// So chore, docs, ci, test, refactor, style and build do not release on their
-// own. A commit with no conventional prefix releases nothing either: this
-// repository's older history is not conventional, and guessing at it would
-// release on a commit that says only "remove map".
-function bumpFor({ subject, body }) {
-  const header = /^(?<type>[a-z]+)(?<scope>\([^)]*\))?(?<breaking>!)?:/i.exec(subject);
-  if (!header) return null;
-
-  // `feat!: ...` and a `BREAKING CHANGE:` footer both mean major. The footer
-  // is matched at the start of a line so that a mention inside a sentence does
-  // not trigger a major release.
-  if (header.groups.breaking || /^BREAKING[ -]CHANGE:/m.test(body)) return 'major';
-
-  const type = header.groups.type.toLowerCase();
-  if (type === 'feat') return 'minor';
-  if (type === 'fix' || type === 'perf') return 'patch';
-  return null;
-}
-
-const RANK = { patch: 1, minor: 2, major: 3 };
-
-function applyBump(version, bump) {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (!match) {
-    throw new Error(`package.json version is not a plain x.y.z: ${version}`);
-  }
-  const [major, minor, patch] = match.slice(1).map(Number);
-
-  if (bump === 'major') return `${major + 1}.0.0`;
-  if (bump === 'minor') return `${major}.${minor + 1}.0`;
-  return `${major}.${minor}.${patch + 1}`;
-}
+// bumpFor, applyBump and RANK come from ./conventional.mjs, which
+// tools/check-pr-title.mjs shares. Under a squash merge the pull request title
+// becomes the only commit subject on main, so the check and this script have to
+// read the same rules.
 
 // ---------------------------------------------------------------------------
 // CHANGELOG
